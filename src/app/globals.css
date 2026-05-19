@@ -67,6 +67,14 @@ h1 { letter-spacing: -0.025em; }
   box-shadow: 0 0 0 3px rgba(23, 68, 158, 0.14);
   outline: none;
 }
+.lp-input-error {
+  border-color: #dc2626;
+  background: #fff5f5;
+}
+.lp-input-error:focus {
+  border-color: #dc2626;
+  box-shadow: 0 0 0 3px rgba(220, 38, 38, 0.18);
+}
 
 /* Button styles */
 .btn-primary {

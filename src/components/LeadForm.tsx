@@ -25,6 +25,8 @@ interface FormData {
   insurance: string;
 }
 
+type FieldKey = keyof FormData;
+
 const initial: FormData = {
   firstName: "",
   lastName: "",
@@ -46,6 +48,36 @@ declare global {
   }
 }
 
+// Per-field validators. Return null when valid, an error string otherwise.
+// These are pure and reused for both on-blur and on-submit validation, so the
+// user sees the SAME message inline as they type/blur that would have blocked
+// a submit attempt.
+const validators: Record<FieldKey, (v: string) => string | null> = {
+  firstName: (v) => (v.trim() ? null : "Please enter your first name."),
+  lastName: (v) => (v.trim() ? null : "Please enter your last name."),
+  email: (v) => {
+    const t = v.trim();
+    if (!t) return "Please enter your email.";
+    if (!/^\S+@\S+\.\S+$/.test(t)) return "Please enter a valid email address.";
+    return null;
+  },
+  phone: (v) => {
+    const digits = v.replace(/\D/g, "");
+    if (!digits) return "Please enter your phone number.";
+    if (digits.length !== 10) return "Phone must be a 10-digit number.";
+    return null;
+  },
+  insurance: (v) => (v ? null : "Please select your insurance type."),
+};
+
+const FIELD_ORDER: FieldKey[] = [
+  "firstName",
+  "lastName",
+  "email",
+  "phone",
+  "insurance",
+];
+
 export function LeadForm({
   variant = "hero",
   headline,
@@ -59,14 +91,21 @@ export function LeadForm({
 
   const fid = useId();
   const id = (k: string) => `${k}-${fid}`;
+  const errId = (k: string) => `${k}-err-${fid}`;
 
   const formRef = useRef<HTMLFormElement>(null);
   const [data, setData] = useState<FormData>(initial);
   const [submitted, setSubmitted] = useState(false);
-  const [touched, setTouched] = useState<Record<string, boolean>>({});
+  const [touched, setTouched] = useState<Record<FieldKey, boolean>>({
+    firstName: false,
+    lastName: false,
+    email: false,
+    phone: false,
+    insurance: false,
+  });
   const inFlightRef = useRef(false);
 
-  const update = <K extends keyof FormData>(k: K, v: FormData[K]) =>
+  const update = <K extends FieldKey>(k: K, v: FormData[K]) =>
     setData((d) => ({ ...d, [k]: v }));
 
   const submitting = status === "submitting";
@@ -81,14 +120,17 @@ export function LeadForm({
     return p.join("-");
   };
 
-  const validate = (): string | null => {
-    if (!data.firstName.trim()) return "Please enter your first name.";
-    if (!data.lastName.trim()) return "Please enter your last name.";
-    if (!data.email.trim() || !/^\S+@\S+\.\S+$/.test(data.email))
-      return "Please enter a valid email.";
-    const digits = data.phone.replace(/\D/g, "");
-    if (digits.length !== 10) return "Phone must be a 10-digit number.";
-    if (!data.insurance) return "Please select your insurance type.";
+  // Per-field error. Once a field is touched (blurred) or after a submit
+  // attempt, the error stays visible and updates live as the user edits.
+  const fieldError = (k: FieldKey): string | null => {
+    if (!touched[k]) return null;
+    return validators[k](data[k]);
+  };
+
+  const firstInvalidField = (): FieldKey | null => {
+    for (const k of FIELD_ORDER) {
+      if (validators[k](data[k])) return k;
+    }
     return null;
   };
 
@@ -97,8 +139,10 @@ export function LeadForm({
   // See memory/lp-mistakes.md (SHLY Optimizer Empty-Submit).
   const handleClick = async () => {
     if (submitting || success || inFlightRef.current) return;
-    const err = validate();
-    if (err) {
+    const invalid = firstInvalidField();
+    if (invalid) {
+      // Mark every field as touched so all inline errors appear at once,
+      // then focus the first invalid one so the user knows what to fix.
       setTouched({
         firstName: true,
         lastName: true,
@@ -106,6 +150,10 @@ export function LeadForm({
         phone: true,
         insurance: true,
       });
+      const el = document.getElementById(id(invalid));
+      if (el && typeof (el as HTMLElement).focus === "function") {
+        (el as HTMLElement).focus({ preventScroll: false });
+      }
       return;
     }
     inFlightRef.current = true;
@@ -206,12 +254,42 @@ export function LeadForm({
     );
   }
 
-  const showError = (k: keyof FormData) => touched[k] && !data[k];
+  // Small inline error renderer used under every field.
+  const ErrorText = ({ field }: { field: FieldKey }) => {
+    const err = fieldError(field);
+    if (!err) return null;
+    return (
+      <p
+        id={errId(field)}
+        role="alert"
+        aria-live="polite"
+        className="mt-1.5 text-xs font-medium text-red-600 flex items-start gap-1"
+      >
+        <svg
+          className="w-3.5 h-3.5 mt-[1px] flex-none"
+          viewBox="0 0 20 20"
+          fill="currentColor"
+          aria-hidden="true"
+        >
+          <path
+            fillRule="evenodd"
+            d="M10 18a8 8 0 1 0 0-16 8 8 0 0 0 0 16Zm-.75-11.25a.75.75 0 0 1 1.5 0v4a.75.75 0 0 1-1.5 0v-4Zm.75 8a1 1 0 1 0 0-2 1 1 0 0 0 0 2Z"
+            clipRule="evenodd"
+          />
+        </svg>
+        <span>{err}</span>
+      </p>
+    );
+  };
+
+  const inputClass = (k: FieldKey, extra = "") =>
+    `lp-input ${fieldError(k) ? "lp-input-error" : ""} ${extra}`.trim();
 
   return (
     <form
       ref={formRef}
       onSubmit={handleNativeSubmit}
+      noValidate
       className={`relative rounded-2xl p-6 sm:p-8 ${
         variant === "hero"
           ? "bg-white shadow-2xl border border-[var(--color-border)]"
@@ -243,12 +321,15 @@ export function LeadForm({
             autoComplete="given-name"
             required
             placeholder="First name"
-            className={`lp-input ${showError("firstName") ? "border-red-400" : ""}`}
+            aria-invalid={fieldError("firstName") ? true : undefined}
+            aria-describedby={fieldError("firstName") ? errId("firstName") : undefined}
+            className={inputClass("firstName")}
             value={data.firstName}
             onChange={(e) => update("firstName", e.target.value)}
             onBlur={() => setTouched((t) => ({ ...t, firstName: true }))}
             disabled={submitting}
           />
+          <ErrorText field="firstName" />
         </div>
         <div>
           <label htmlFor={id("lastName")} className="sr-only">
@@ -261,12 +342,15 @@ export function LeadForm({
             autoComplete="family-name"
             required
             placeholder="Last name"
-            className={`lp-input ${showError("lastName") ? "border-red-400" : ""}`}
+            aria-invalid={fieldError("lastName") ? true : undefined}
+            aria-describedby={fieldError("lastName") ? errId("lastName") : undefined}
+            className={inputClass("lastName")}
             value={data.lastName}
             onChange={(e) => update("lastName", e.target.value)}
             onBlur={() => setTouched((t) => ({ ...t, lastName: true }))}
             disabled={submitting}
           />
+          <ErrorText field="lastName" />
         </div>
       </div>
 
@@ -281,12 +365,15 @@ export function LeadForm({
           autoComplete="email"
           required
           placeholder="Email address"
-          className={`lp-input ${showError("email") ? "border-red-400" : ""}`}
+          aria-invalid={fieldError("email") ? true : undefined}
+          aria-describedby={fieldError("email") ? errId("email") : undefined}
+          className={inputClass("email")}
           value={data.email}
           onChange={(e) => update("email", e.target.value)}
           onBlur={() => setTouched((t) => ({ ...t, email: true }))}
           disabled={submitting}
         />
+        <ErrorText field="email" />
       </div>
 
       <div className="mt-3">
@@ -302,12 +389,15 @@ export function LeadForm({
           autoComplete="tel"
           required
           placeholder="Phone number"
-          className={`lp-input ${showError("phone") ? "border-red-400" : ""}`}
+          aria-invalid={fieldError("phone") ? true : undefined}
+          aria-describedby={fieldError("phone") ? errId("phone") : undefined}
+          className={inputClass("phone")}
           value={data.phone}
           onChange={(e) => update("phone", formatPhone(e.target.value))}
           onBlur={() => setTouched((t) => ({ ...t, phone: true }))}
           disabled={submitting}
         />
+        <ErrorText field="phone" />
       </div>
 
       <div className="mt-3 relative">
@@ -318,9 +408,12 @@ export function LeadForm({
           id={id("insurance")}
           name="insurance"
           required
-          className={`lp-input appearance-none pr-10 ${
-            !data.insurance ? "text-[#6b7280]" : ""
-          } ${showError("insurance") ? "border-red-400" : ""}`}
+          aria-invalid={fieldError("insurance") ? true : undefined}
+          aria-describedby={fieldError("insurance") ? errId("insurance") : undefined}
+          className={inputClass(
+            "insurance",
+            `appearance-none pr-10 ${!data.insurance ? "text-[#6b7280]" : ""}`
+          )}
           value={data.insurance}
           onChange={(e) => update("insurance", e.target.value)}
           onBlur={() => setTouched((t) => ({ ...t, insurance: true }))}
@@ -351,10 +444,17 @@ export function LeadForm({
             />
           </svg>
         </div>
+        <ErrorText field="insurance" />
       </div>
 
       {errorMessage && status === "error" && (
-        <div className="mt-3 text-sm text-red-600">{errorMessage}</div>
+        <div
+          role="alert"
+          aria-live="polite"
+          className="mt-3 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700"
+        >
+          {errorMessage}
+        </div>
       )}
 
       <button
