@@ -47,7 +47,7 @@ export function Hero() {
           <Reveal variant="up" delay={80}>
             <h1 className="mt-5 text-4xl sm:text-5xl lg:text-[3.5rem] font-extrabold leading-[1.06] text-[var(--color-text)]">
               Foot pain?{" "}
-              <span className="text-[var(--color-primary)]">See a Richmond podiatrist</span>
+              <span className="text-[var(--color-primary)]">See a Virginia podiatrist</span>
               {" "}today
               <span className="text-[var(--color-accent)]">.</span>
             </h1>
